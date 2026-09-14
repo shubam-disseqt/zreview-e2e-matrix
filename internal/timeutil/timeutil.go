@@ -4,6 +4,7 @@ import "time"
 
 // FormatDurationCompact renders a duration like "1h23m" or "45s".
 // It omits zero units and never returns an empty string.
+// Sub-second durations render as "<1s".
 func FormatDurationCompact(d time.Duration) string {
 	if d < time.Second {
 		return "<1s"
