@@ -8,6 +8,7 @@ func TestAbsDiff(t *testing.T) {
 		{3, 5, 2},
 		{0, 0, 0},
 		{-5, 5, 10},
+		{100, 1, 99},
 	}
 	for _, c := range cases {
 		if got := AbsDiff(c.a, c.b); got != c.want {

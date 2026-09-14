@@ -8,6 +8,7 @@ func TestClamp(t *testing.T) {
 		{-1, 0, 10, 0},
 		{11, 0, 10, 10},
 		{0, 0, 0, 0},
+		{7, -5, 5, 5},
 	}
 	for _, c := range cases {
 		if got := Clamp(c.v, c.lo, c.hi); got != c.want {
