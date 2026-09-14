@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"time"
 )
@@ -12,9 +13,9 @@ type Session struct {
 	ExpiresAt time.Time
 }
 
-// Bug 1: token length only 8 bytes (16 hex chars) — insufficient entropy.
+// 32-byte token = 64 hex chars, sufficient entropy.
 func NewSession(userID string) *Session {
-	raw := make([]byte, 8)
+	raw := make([]byte, 32)
 	_, _ = rand.Read(raw)
 	return &Session{
 		UserID:    userID,
@@ -23,10 +24,10 @@ func NewSession(userID string) *Session {
 	}
 }
 
-// Bug 2: comparison uses ==, timing-attack vulnerable
+// Constant-time comparison avoids timing attacks.
 func (s *Session) IsValid(token string) bool {
 	if time.Now().After(s.ExpiresAt) {
 		return false
 	}
-	return s.Token == token
+	return subtle.ConstantTimeCompare([]byte(s.Token), []byte(token)) == 1
 }
