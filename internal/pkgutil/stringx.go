@@ -16,3 +16,8 @@ func StringReverse(s string) string {
 func StringContains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
+
+// StringEqualFold reports whether s and t are equal under Unicode case folding.
+func StringEqualFold(s, t string) bool {
+	return strings.EqualFold(s, t)
+}
