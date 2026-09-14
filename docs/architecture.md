@@ -4,7 +4,7 @@ The service follows a layered architecture: an HTTP handler layer thin enough to
 
 The domain service coordinates business rules and delegates persistence to a repository layer sitting behind an interface.
 
-State lives in Postgres, cache lives in Redis, and async work is fanned out via a lightweight worker pool consuming from a durable queue.
+State lives in Postgres, cache lives in Redis, and async work is fanned out via a light-weight worker pool consuming from a durable queue.
 
 Observability is uniform: every request carries an X-Request-ID that flows through logs, traces, and outbound calls to downstream services.
 
