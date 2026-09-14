@@ -5,9 +5,11 @@ import (
 	"time"
 )
 
-// Store is a naive in-memory session cache.
+// maxEntries caps the in-memory map so a churny caller can't OOM the process.
+const maxEntries = 100_000
+
 type Store struct {
-	mu    sync.RWMutex
+	mu    sync.Mutex
 	items map[string]entry
 }
 
@@ -20,22 +22,45 @@ func New() *Store {
 	return &Store{items: make(map[string]entry)}
 }
 
-// Set records a session token → user mapping.
-// BUG 5: no eviction path — the map grows without bound (memory leak on high churn).
+// Set records a session. If the store is at capacity, one expired entry is
+// evicted; if none are expired, the oldest is dropped.
 func (s *Store) Set(token, userID string, ttl time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(s.items) >= maxEntries {
+		s.evictOneLocked()
+	}
 	s.items[token] = entry{userID: userID, expiresAt: time.Now().Add(ttl)}
 }
 
-// Get returns the user for a session token, or empty string if unknown.
+// Get returns the user for a live, non-expired session, or "" if unknown or
+// expired.
 func (s *Store) Get(token string) string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	e, ok := s.items[token]
 	if !ok {
 		return ""
 	}
-	// BUG 6: expired sessions still return a valid user — no expiry check here.
+	if time.Now().After(e.expiresAt) {
+		delete(s.items, token)
+		return ""
+	}
 	return e.userID
+}
+
+// evictOneLocked drops the first expired entry it finds, falling back to any
+// entry if the store is fully live. Caller must hold s.mu.
+func (s *Store) evictOneLocked() {
+	now := time.Now()
+	for tok, e := range s.items {
+		if now.After(e.expiresAt) {
+			delete(s.items, tok)
+			return
+		}
+	}
+	for tok := range s.items {
+		delete(s.items, tok)
+		return
+	}
 }

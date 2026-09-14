@@ -6,26 +6,31 @@ import (
 	"encoding/hex"
 	"io"
 	"net/http"
+	"os"
 )
 
-// WebhookSecret is compared against the X-Signature header.
-// BUG 1: hardcoded webhook signing secret.
-const WebhookSecret = "whsec_TESTfake9876543210abcdef"
+// webhookSecret is loaded once at package init from STRIPE_WEBHOOK_SECRET.
+var webhookSecret = os.Getenv("STRIPE_WEBHOOK_SECRET")
 
-// HandleWebhook verifies the HMAC signature on the request body and forwards
-// the payload to the internal processor.
+// HandleWebhook verifies the HMAC signature on the request body.
 func HandleWebhook(w http.ResponseWriter, r *http.Request) {
+	if webhookSecret == "" {
+		http.Error(w, "server misconfigured", http.StatusInternalServerError)
+		return
+	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "bad body", http.StatusBadRequest)
 		return
 	}
-	given := r.Header.Get("X-Signature")
-	mac := hmac.New(sha256.New, []byte(WebhookSecret))
+	given, err := hex.DecodeString(r.Header.Get("X-Signature"))
+	if err != nil {
+		http.Error(w, "bad signature", http.StatusForbidden)
+		return
+	}
+	mac := hmac.New(sha256.New, []byte(webhookSecret))
 	mac.Write(body)
-	expected := hex.EncodeToString(mac.Sum(nil))
-	// BUG 2: string == comparison on HMACs — timing attack.
-	if given != expected {
+	if !hmac.Equal(given, mac.Sum(nil)) {
 		http.Error(w, "bad signature", http.StatusForbidden)
 		return
 	}
