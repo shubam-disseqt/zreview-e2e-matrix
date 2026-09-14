@@ -1,0 +1,1 @@
+[zreview] metrics: duration=154.1s files=40 tokens=in:219884/out:9682 cost=$0.00 findings=new:12/carried:0/resolved:0 scanner=0 comments=12 carried_findings=0 comments_posted=12 completion_tokens=9682 duration_ms=154089 files_reviewed=40 new_findings=12 prompt_tokens=219884 resolved_findings=0 scanner_findings=0 total_cost_usd=0

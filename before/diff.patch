@@ -1,0 +1,1270 @@
+diff --git a/cmd/api/wire.go b/cmd/api/wire.go
+new file mode 100644
+index 0000000..1fb404c
+--- /dev/null
++++ b/cmd/api/wire.go
+@@ -0,0 +1,10 @@
++package main
++
++import (
++	"github.com/shubam-disseqt/zreview-e2e-matrix/internal/service"
++	"github.com/shubam-disseqt/zreview-e2e-matrix/internal/store"
++)
++
++func newService() *service.Service {
++	return service.New(store.New())
++}
+diff --git "a/cmd/api/wire.go\ninternal/service/service.go\ninternal/service/service_test.go\ninternal/store/store.go" "b/cmd/api/wire.go\ninternal/service/service.go\ninternal/service/service_test.go\ninternal/store/store.go"
+new file mode 100644
+index 0000000..e69de29
+diff --git a/docs/architecture.md b/docs/architecture.md
+new file mode 100644
+index 0000000..8c50680
+--- /dev/null
++++ b/docs/architecture.md
+@@ -0,0 +1,11 @@
++# Architecture Overview
++
++The service follows a layered architecture: an HTTP handler layer thin enough to only unmarshal requests and dispatch to a domain service.
++
++The domain service coordinates business rules and delegates persistence to a repository layer sitting behind an interface.
++
++State lives in Postgres, cache lives in Redis, and async work is fanned out via a light-weight worker pool consuming from a durable queue.
++
++Observability is uniform: every request carries an X-Request-ID that flows through logs, traces, and outbound calls to downstream services.
++
++Failures are surfaced as typed errors and mapped to HTTP responses at the boundary, never mid-stack.
+diff --git a/go.mod b/go.mod
+index 214b518..42c0f87 100644
+--- a/go.mod
++++ b/go.mod
+@@ -1,3 +1,5 @@
+ module github.com/shubam-disseqt/zreview-e2e-matrix
+ 
+ go 1.22
++
++require github.com/google/uuid v1.5.0 // indirect
+diff --git a/go.sum b/go.sum
+new file mode 100644
+index 0000000..ba00393
+--- /dev/null
++++ b/go.sum
+@@ -0,0 +1,4 @@
++github.com/google/uuid v1.5.0 h1:1p67kYwdtXjb0gL0BPiP1Av9wiZPo5A8z2cWkTZ+eyU=
++github.com/google/uuid v1.5.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
++github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
++github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+diff --git a/internal/auth/middleware.go b/internal/auth/middleware.go
+new file mode 100644
+index 0000000..5bf2eea
+--- /dev/null
++++ b/internal/auth/middleware.go
+@@ -0,0 +1,18 @@
++package auth
++
++import (
++	"net/http"
++)
++
++var currentSession *Session // package-global — dangerous in real code but not a "bug" per se
++
++func Middleware(next http.Handler) http.Handler {
++	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		token := r.Header.Get("Authorization")
++		if currentSession == nil || !currentSession.IsValid(token) {
++			http.Error(w, "unauthorized", http.StatusUnauthorized)
++			return
++		}
++		next.ServeHTTP(w, r)
++	})
++}
+diff --git a/internal/auth/session.go b/internal/auth/session.go
+new file mode 100644
+index 0000000..04d2574
+--- /dev/null
++++ b/internal/auth/session.go
+@@ -0,0 +1,33 @@
++package auth
++
++import (
++	"crypto/rand"
++	"crypto/subtle"
++	"encoding/hex"
++	"time"
++)
++
++type Session struct {
++	UserID    string
++	Token     string
++	ExpiresAt time.Time
++}
++
++// 32-byte token = 64 hex chars, sufficient entropy.
++func NewSession(userID string) *Session {
++	raw := make([]byte, 32)
++	_, _ = rand.Read(raw)
++	return &Session{
++		UserID:    userID,
++		Token:     hex.EncodeToString(raw),
++		ExpiresAt: time.Now().Add(24 * time.Hour),
++	}
++}
++
++// Constant-time comparison avoids timing attacks.
++func (s *Session) IsValid(token string) bool {
++	if time.Now().After(s.ExpiresAt) {
++		return false
++	}
++	return subtle.ConstantTimeCompare([]byte(s.Token), []byte(token)) == 1
++}
+diff --git a/internal/db/migrations/003_add_user_email.sql b/internal/db/migrations/003_add_user_email.sql
+new file mode 100644
+index 0000000..6faf80c
+--- /dev/null
++++ b/internal/db/migrations/003_add_user_email.sql
+@@ -0,0 +1,7 @@
++-- +migrate Up
++ALTER TABLE users ADD COLUMN email VARCHAR(255) NOT NULL DEFAULT '';
++CREATE UNIQUE INDEX users_email_idx ON users(email) WHERE email <> '';
++
++-- +migrate Down
++DROP INDEX users_email_idx;
++ALTER TABLE users DROP COLUMN email;
+diff --git a/internal/db/user.go b/internal/db/user.go
+new file mode 100644
+index 0000000..2613b14
+--- /dev/null
++++ b/internal/db/user.go
+@@ -0,0 +1,12 @@
++package db
++
++// User mirrors the users row shape. Email added in migration 003.
++type User struct {
++	ID    int
++	Name  string
++	Email string
++}
++
++func (u *User) HasEmail() bool {
++	return u.Email != ""
++}
+diff --git a/internal/db/user_validate.go b/internal/db/user_validate.go
+new file mode 100644
+index 0000000..43a80b1
+--- /dev/null
++++ b/internal/db/user_validate.go
+@@ -0,0 +1,12 @@
++package db
++
++import "strings"
++
++// ValidEmail returns true if e has a single @ and a non-empty local/domain part.
++func ValidEmail(e string) bool {
++	i := strings.IndexByte(e, '@')
++	if i <= 0 || i == len(e)-1 {
++		return false
++	}
++	return strings.IndexByte(e[i+1:], '@') == -1
++}
+diff --git a/internal/files/download.go b/internal/files/download.go
+new file mode 100644
+index 0000000..14831bd
+--- /dev/null
++++ b/internal/files/download.go
+@@ -0,0 +1,22 @@
++package files
++
++import (
++	"io"
++	"net/http"
++	"os"
++	"path/filepath"
++)
++
++// ServeFile streams a file from the configured storage root.
++// BUG 4: path traversal — filepath.Join does not prevent "../../etc/passwd".
++func ServeFile(w http.ResponseWriter, r *http.Request) {
++	name := r.URL.Query().Get("name")
++	full := filepath.Join("/var/data", name)
++	f, err := os.Open(full)
++	if err != nil {
++		http.NotFound(w, r)
++		return
++	}
++	defer f.Close()
++	_, _ = io.Copy(w, f)
++}
+diff --git a/internal/legacy/cache.go b/internal/legacy/cache.go
+new file mode 100644
+index 0000000..ff8b721
+--- /dev/null
++++ b/internal/legacy/cache.go
+@@ -0,0 +1,58 @@
++package legacy
++
++import (
++	"container/list"
++	"sync"
++)
++
++// Cache is a bounded LRU string cache.
++type Cache struct {
++	mu   sync.Mutex
++	max  int
++	m    map[string]*list.Element
++	ll   *list.List
++}
++
++type entry struct {
++	k, v string
++}
++
++// NewCache returns an LRU cache holding at most max entries.
++func NewCache(max int) *Cache {
++	if max <= 0 {
++		max = 1024
++	}
++	return &Cache{max: max, m: make(map[string]*list.Element, max), ll: list.New()}
++}
++
++// Set stores v under k, evicting the oldest entry once full.
++func (c *Cache) Set(k, v string) {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	if el, ok := c.m[k]; ok {
++		el.Value.(*entry).v = v
++		c.ll.MoveToFront(el)
++		return
++	}
++	el := c.ll.PushFront(&entry{k: k, v: v})
++	c.m[k] = el
++	if c.ll.Len() > c.max {
++		old := c.ll.Back()
++		if old != nil {
++			c.ll.Remove(old)
++			delete(c.m, old.Value.(*entry).k)
++		}
++	}
++}
++
++// Get returns the value for k and marks it recently used.
++func (c *Cache) Get(k string) (string, bool) {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	el, ok := c.m[k]
++	if !ok {
++		return "", false
++	}
++	c.ll.MoveToFront(el)
++	return el.Value.(*entry).v, true
++}
+diff --git a/internal/legacy/config.go b/internal/legacy/config.go
+new file mode 100644
+index 0000000..d858ba0
+--- /dev/null
++++ b/internal/legacy/config.go
+@@ -0,0 +1,41 @@
++package legacy
++
++import (
++	"fmt"
++	"os"
++	"strconv"
++)
++
++// Config holds legacy subsystem configuration.
++type Config struct {
++	Port    int
++	DBHost  string
++	Timeout int
++}
++
++const defaultPort = 8080
++
++// Load returns a config from env with a safe default port.
++// Fails cleanly with a descriptive error rather than panicking at init.
++func Load() (*Config, error) {
++	port := defaultPort
++	if raw := os.Getenv("LEGACY_PORT"); raw != "" {
++		p, err := strconv.Atoi(raw)
++		if err != nil || p <= 0 {
++			return nil, fmt.Errorf("LEGACY_PORT invalid: %q", raw)
++		}
++		port = p
++	}
++	return &Config{
++		Port:    port,
++		DBHost:  os.Getenv("LEGACY_DB_HOST"),
++		Timeout: 30,
++	}, nil
++}
++
++// WithPort returns a copy with a different port.
++func (c *Config) WithPort(p int) *Config {
++	nc := *c
++	nc.Port = p
++	return &nc
++}
+diff --git a/internal/legacy/http.go b/internal/legacy/http.go
+new file mode 100644
+index 0000000..8253f55
+--- /dev/null
++++ b/internal/legacy/http.go
+@@ -0,0 +1,27 @@
++package legacy
++
++import (
++	"database/sql"
++	"fmt"
++	"net/http"
++)
++
++// UserLookup handles user lookup by name from a query param.
++type UserLookup struct {
++	DB *sql.DB
++}
++
++// Handle serves GET /user?name=...
++// Uses a parameterized query — no string concatenation with untrusted input.
++func (u *UserLookup) Handle(w http.ResponseWriter, r *http.Request) {
++	name := r.URL.Query().Get("name")
++	row := u.DB.QueryRow("SELECT id, email FROM users WHERE name = ?", name)
++
++	var id int
++	var email string
++	if err := row.Scan(&id, &email); err != nil {
++		http.Error(w, "not found", http.StatusNotFound)
++		return
++	}
++	fmt.Fprintf(w, "%d,%s\n", id, email)
++}
+diff --git a/internal/legacy/log.go b/internal/legacy/log.go
+new file mode 100644
+index 0000000..ce9da8f
+--- /dev/null
++++ b/internal/legacy/log.go
+@@ -0,0 +1,40 @@
++package legacy
++
++import (
++	"errors"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++)
++
++// AuditLogger writes audit lines to a per-tenant file.
++type AuditLogger struct {
++	BaseDir string
++}
++
++// ErrInvalidTenant is returned when a tenant identifier is unsafe.
++var ErrInvalidTenant = errors.New("invalid tenant identifier")
++
++// Write appends msg to <BaseDir>/<tenant>.log.
++// Tenant is validated to prevent path traversal.
++func (a *AuditLogger) Write(tenant, msg string) error {
++	if tenant == "" || strings.ContainsAny(tenant, `/\`) || strings.Contains(tenant, "..") {
++		return ErrInvalidTenant
++	}
++	base, err := filepath.Abs(a.BaseDir)
++	if err != nil {
++		return err
++	}
++	path := filepath.Join(base, tenant+".log")
++	if !strings.HasPrefix(path, base+string(os.PathSeparator)) {
++		return ErrInvalidTenant
++	}
++	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
++	if err != nil {
++		return err
++	}
++	defer f.Close()
++	_, err = fmt.Fprintln(f, msg)
++	return err
++}
+diff --git a/internal/legacy/main.go b/internal/legacy/main.go
+new file mode 100644
+index 0000000..3d80d90
+--- /dev/null
++++ b/internal/legacy/main.go
+@@ -0,0 +1,34 @@
++package legacy
++
++import (
++	"errors"
++	"log"
++)
++
++// Credentials for legacy login.
++type Credentials struct {
++	Username string
++	Password string
++}
++
++// Login authenticates a user. The password is never logged.
++func Login(c Credentials) error {
++	log.Printf("legacy login attempt: user=%s", c.Username)
++	if c.Username == "" || c.Password == "" {
++		return errors.New("missing credentials")
++	}
++	if !authenticate(c) {
++		return errors.New("invalid credentials")
++	}
++	return nil
++}
++
++func authenticate(c Credentials) bool {
++	// Placeholder: real code would hit an auth service.
++	return c.Username == "admin" && c.Password == "hunter2"
++}
++
++// Logout is a no-op placeholder.
++func Logout(username string) {
++	log.Printf("legacy logout: user=%s", username)
++}
+diff --git a/internal/legacy/parse.go b/internal/legacy/parse.go
+new file mode 100644
+index 0000000..94cf438
+--- /dev/null
++++ b/internal/legacy/parse.go
+@@ -0,0 +1,31 @@
++package legacy
++
++import (
++	"fmt"
++	"strconv"
++	"strings"
++)
++
++// Record is a parsed CSV record: id,amount,note.
++type Record struct {
++	ID     int
++	Amount int
++	Note   string
++}
++
++// ParseRecord parses "id,amount,note", returning an error on malformed input.
++func ParseRecord(line string) (Record, error) {
++	parts := strings.SplitN(line, ",", 3)
++	if len(parts) < 3 {
++		return Record{}, fmt.Errorf("expected 3 fields, got %d", len(parts))
++	}
++	id, err := strconv.Atoi(parts[0])
++	if err != nil {
++		return Record{}, fmt.Errorf("invalid id %q: %w", parts[0], err)
++	}
++	amount, err := strconv.Atoi(parts[1])
++	if err != nil {
++		return Record{}, fmt.Errorf("invalid amount %q: %w", parts[1], err)
++	}
++	return Record{ID: id, Amount: amount, Note: parts[2]}, nil
++}
+diff --git a/internal/legacy/queue.go b/internal/legacy/queue.go
+new file mode 100644
+index 0000000..cc6ecf7
+--- /dev/null
++++ b/internal/legacy/queue.go
+@@ -0,0 +1,40 @@
++package legacy
++
++import "sync"
++
++// Queue is a simple thread-safe FIFO queue of strings.
++type Queue struct {
++	mu    sync.Mutex
++	items []string
++}
++
++// NewQueue returns an empty queue.
++func NewQueue() *Queue {
++	return &Queue{items: make([]string, 0, 16)}
++}
++
++// Push appends an item.
++func (q *Queue) Push(item string) {
++	q.mu.Lock()
++	defer q.mu.Unlock()
++	q.items = append(q.items, item)
++}
++
++// Pop removes and returns the head, or "" if empty.
++func (q *Queue) Pop() (string, bool) {
++	q.mu.Lock()
++	defer q.mu.Unlock()
++	if len(q.items) == 0 {
++		return "", false
++	}
++	head := q.items[0]
++	q.items = q.items[1:]
++	return head, true
++}
++
++// Len returns the current length.
++func (q *Queue) Len() int {
++	q.mu.Lock()
++	defer q.mu.Unlock()
++	return len(q.items)
++}
+diff --git a/internal/legacy/retry.go b/internal/legacy/retry.go
+new file mode 100644
+index 0000000..77f5815
+--- /dev/null
++++ b/internal/legacy/retry.go
+@@ -0,0 +1,38 @@
++package legacy
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"time"
++)
++
++// Retrier retries fn up to MaxAttempts, respecting context cancellation.
++type Retrier struct {
++	Delay       time.Duration
++	MaxAttempts int
++}
++
++// ErrGaveUp is returned once a retrier decides to stop.
++var ErrGaveUp = errors.New("retrier gave up")
++
++// Do calls fn until it returns nil, ctx is cancelled, or MaxAttempts is hit.
++func (r *Retrier) Do(ctx context.Context, fn func() error) error {
++	if r.MaxAttempts <= 0 {
++		return fmt.Errorf("retrier: MaxAttempts must be > 0")
++	}
++	var lastErr error
++	for i := 0; i < r.MaxAttempts; i++ {
++		if err := fn(); err == nil {
++			return nil
++		} else {
++			lastErr = err
++		}
++		select {
++		case <-ctx.Done():
++			return ctx.Err()
++		case <-time.After(r.Delay):
++		}
++	}
++	return fmt.Errorf("%w: last error: %v", ErrGaveUp, lastErr)
++}
+diff --git a/internal/legacy/session.go b/internal/legacy/session.go
+new file mode 100644
+index 0000000..f8b83b1
+--- /dev/null
++++ b/internal/legacy/session.go
+@@ -0,0 +1,35 @@
++package legacy
++
++import (
++	"crypto/rand"
++	"encoding/hex"
++	"time"
++)
++
++// Session represents a login session.
++type Session struct {
++	ID        string
++	UserID    int
++	CreatedAt time.Time
++}
++
++// sessionTokenBytes is 32 bytes = 256 bits of entropy.
++const sessionTokenBytes = 32
++
++// NewSession creates a new session with a random, sufficiently long ID.
++func NewSession(userID int) (*Session, error) {
++	b := make([]byte, sessionTokenBytes)
++	if _, err := rand.Read(b); err != nil {
++		return nil, err
++	}
++	return &Session{
++		ID:        hex.EncodeToString(b),
++		UserID:    userID,
++		CreatedAt: time.Now(),
++	}, nil
++}
++
++// Expired reports whether the session is older than d.
++func (s *Session) Expired(d time.Duration) bool {
++	return time.Since(s.CreatedAt) > d
++}
+diff --git a/internal/legacy/user.go b/internal/legacy/user.go
+new file mode 100644
+index 0000000..bfee871
+--- /dev/null
++++ b/internal/legacy/user.go
+@@ -0,0 +1,28 @@
++package legacy
++
++import "strings"
++
++// User is a legacy user record.
++type User struct {
++	ID    int
++	Name  string
++	Email string
++}
++
++// Normalize returns a copy with trimmed and lowercased fields.
++func (u User) Normalize() User {
++	return User{
++		ID:    u.ID,
++		Name:  strings.TrimSpace(u.Name),
++		Email: strings.ToLower(strings.TrimSpace(u.Email)),
++	}
++}
++
++// DisplayName returns "Name <email>".
++func (u User) DisplayName() string {
++	n := strings.TrimSpace(u.Name)
++	if n == "" {
++		return u.Email
++	}
++	return n + " <" + u.Email + ">"
++}
+diff --git a/internal/mathx/absdiff_test.go b/internal/mathx/absdiff_test.go
+new file mode 100644
+index 0000000..fab9402
+--- /dev/null
++++ b/internal/mathx/absdiff_test.go
+@@ -0,0 +1,18 @@
++package mathx
++
++import "testing"
++
++func TestAbsDiff(t *testing.T) {
++	cases := []struct{ a, b, want int }{
++		{5, 3, 2},
++		{3, 5, 2},
++		{0, 0, 0},
++		{-5, 5, 10},
++		{100, 1, 99},
++	}
++	for _, c := range cases {
++		if got := AbsDiff(c.a, c.b); got != c.want {
++			t.Errorf("AbsDiff(%d,%d) = %d, want %d", c.a, c.b, got, c.want)
++		}
++	}
++}
+diff --git a/internal/mathx/clamp_test.go b/internal/mathx/clamp_test.go
+new file mode 100644
+index 0000000..87671d1
+--- /dev/null
++++ b/internal/mathx/clamp_test.go
+@@ -0,0 +1,18 @@
++package mathx
++
++import "testing"
++
++func TestClamp(t *testing.T) {
++	cases := []struct{ v, lo, hi, want int }{
++		{5, 0, 10, 5},
++		{-1, 0, 10, 0},
++		{11, 0, 10, 10},
++		{0, 0, 0, 0},
++		{7, -5, 5, 5},
++	}
++	for _, c := range cases {
++		if got := Clamp(c.v, c.lo, c.hi); got != c.want {
++			t.Errorf("Clamp(%d,%d,%d) = %d, want %d", c.v, c.lo, c.hi, got, c.want)
++		}
++	}
++}
+diff --git a/internal/mathx/mathx.go b/internal/mathx/mathx.go
+new file mode 100644
+index 0000000..3a6e451
+--- /dev/null
++++ b/internal/mathx/mathx.go
+@@ -0,0 +1,23 @@
++package mathx
++
++// Clamp constrains v to [lo, hi]. Panics if lo > hi.
++func Clamp(v, lo, hi int) int {
++	if lo > hi {
++		panic("mathx: lo > hi")
++	}
++	if v < lo {
++		return lo
++	}
++	if v > hi {
++		return hi
++	}
++	return v
++}
++
++// AbsDiff returns |a-b|.
++func AbsDiff(a, b int) int {
++	if a > b {
++		return a - b
++	}
++	return b - a
++}
+diff --git a/internal/paymentx/webhook.go b/internal/paymentx/webhook.go
+new file mode 100644
+index 0000000..90cf19c
+--- /dev/null
++++ b/internal/paymentx/webhook.go
+@@ -0,0 +1,33 @@
++package paymentx
++
++import (
++	"crypto/hmac"
++	"crypto/sha256"
++	"encoding/hex"
++	"io"
++	"net/http"
++)
++
++// WebhookSecret is compared against the X-Signature header.
++// BUG 1: hardcoded webhook signing secret.
++const WebhookSecret = "whsec_TESTfake9876543210abcdef"
++
++// HandleWebhook verifies the HMAC signature on the request body and forwards
++// the payload to the internal processor.
++func HandleWebhook(w http.ResponseWriter, r *http.Request) {
++	body, err := io.ReadAll(r.Body)
++	if err != nil {
++		http.Error(w, "bad body", http.StatusBadRequest)
++		return
++	}
++	given := r.Header.Get("X-Signature")
++	mac := hmac.New(sha256.New, []byte(WebhookSecret))
++	mac.Write(body)
++	expected := hex.EncodeToString(mac.Sum(nil))
++	// BUG 2: string == comparison on HMACs — timing attack.
++	if given != expected {
++		http.Error(w, "bad signature", http.StatusForbidden)
++		return
++	}
++	_, _ = w.Write([]byte("ok"))
++}
+diff --git a/internal/pkgutil/base64x.go b/internal/pkgutil/base64x.go
+new file mode 100644
+index 0000000..501de22
+--- /dev/null
++++ b/internal/pkgutil/base64x.go
+@@ -0,0 +1,13 @@
++package pkgutil
++
++import "encoding/base64"
++
++// EncodeURL returns the URL-safe base64 encoding of data (no padding).
++func EncodeURL(data []byte) string {
++	return base64.RawURLEncoding.EncodeToString(data)
++}
++
++// DecodeURL decodes a URL-safe base64 string (no padding).
++func DecodeURL(s string) ([]byte, error) {
++	return base64.RawURLEncoding.DecodeString(s)
++}
+diff --git a/internal/pkgutil/errx.go b/internal/pkgutil/errx.go
+new file mode 100644
+index 0000000..0bef9d9
+--- /dev/null
++++ b/internal/pkgutil/errx.go
+@@ -0,0 +1,19 @@
++package pkgutil
++
++import (
++	"errors"
++	"fmt"
++)
++
++// Wrap wraps err with msg. Returns nil if err is nil.
++func Wrap(err error, msg string) error {
++	if err == nil {
++		return nil
++	}
++	return fmt.Errorf("%s: %w", msg, err)
++}
++
++// Is reports whether any error in err's chain matches target.
++func Is(err, target error) bool {
++	return errors.Is(err, target)
++}
+diff --git a/internal/pkgutil/hashx.go b/internal/pkgutil/hashx.go
+new file mode 100644
+index 0000000..74e56a9
+--- /dev/null
++++ b/internal/pkgutil/hashx.go
+@@ -0,0 +1,12 @@
++package pkgutil
++
++import (
++	"crypto/sha256"
++	"encoding/hex"
++)
++
++// SHA256Hex returns the hex-encoded SHA-256 digest of data.
++func SHA256Hex(data []byte) string {
++	sum := sha256.Sum256(data)
++	return hex.EncodeToString(sum[:])
++}
+diff --git a/internal/pkgutil/jsonx.go b/internal/pkgutil/jsonx.go
+new file mode 100644
+index 0000000..f13c5f4
+--- /dev/null
++++ b/internal/pkgutil/jsonx.go
+@@ -0,0 +1,13 @@
++package pkgutil
++
++import "encoding/json"
++
++// MustMarshal returns the JSON encoding of v, panicking on error.
++// Use only with values known to be marshalable (config, tests, fixtures).
++func MustMarshal(v any) []byte {
++	b, err := json.Marshal(v)
++	if err != nil {
++		panic("pkgutil: MustMarshal: " + err.Error())
++	}
++	return b
++}
+diff --git a/internal/pkgutil/logx.go b/internal/pkgutil/logx.go
+new file mode 100644
+index 0000000..81df4d9
+--- /dev/null
++++ b/internal/pkgutil/logx.go
+@@ -0,0 +1,23 @@
++package pkgutil
++
++import (
++	"log/slog"
++	"os"
++)
++
++// Logger is a thin wrapper around slog.Logger to keep call sites terse.
++type Logger struct {
++	sl *slog.Logger
++}
++
++// NewLogger returns a Logger writing JSON to stderr at the given level.
++func NewLogger(level slog.Level) *Logger {
++	h := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})
++	return &Logger{sl: slog.New(h)}
++}
++
++// Info logs at info level with key/value attributes.
++func (l *Logger) Info(msg string, args ...any) { l.sl.Info(msg, args...) }
++
++// Error logs at error level with key/value attributes.
++func (l *Logger) Error(msg string, args ...any) { l.sl.Error(msg, args...) }
+diff --git a/internal/pkgutil/mapx.go b/internal/pkgutil/mapx.go
+new file mode 100644
+index 0000000..b987c4d
+--- /dev/null
++++ b/internal/pkgutil/mapx.go
+@@ -0,0 +1,19 @@
++package pkgutil
++
++// Keys returns the keys of m. Order is unspecified.
++func Keys[K comparable, V any](m map[K]V) []K {
++	out := make([]K, 0, len(m))
++	for k := range m {
++		out = append(out, k)
++	}
++	return out
++}
++
++// Values returns the values of m. Order is unspecified.
++func Values[K comparable, V any](m map[K]V) []V {
++	out := make([]V, 0, len(m))
++	for _, v := range m {
++		out = append(out, v)
++	}
++	return out
++}
+diff --git a/internal/pkgutil/numx.go b/internal/pkgutil/numx.go
+new file mode 100644
+index 0000000..bdaf83f
+--- /dev/null
++++ b/internal/pkgutil/numx.go
+@@ -0,0 +1,26 @@
++package pkgutil
++
++// Number is a constraint matching Go's built-in numeric types.
++type Number interface {
++	~int | ~int8 | ~int16 | ~int32 | ~int64 |
++		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 |
++		~float32 | ~float64
++}
++
++// Sum returns the sum of values in s.
++func Sum[T Number](s []T) T {
++	var total T
++	for _, v := range s {
++		total += v
++	}
++	return total
++}
++
++// Product returns the product of values in s. Empty slice yields 1.
++func Product[T Number](s []T) T {
++	var total T = 1
++	for _, v := range s {
++		total *= v
++	}
++	return total
++}
+diff --git a/internal/pkgutil/ptrx.go b/internal/pkgutil/ptrx.go
+new file mode 100644
+index 0000000..fe7a739
+--- /dev/null
++++ b/internal/pkgutil/ptrx.go
+@@ -0,0 +1,15 @@
++package pkgutil
++
++// Ptr returns a pointer to v.
++func Ptr[T any](v T) *T {
++	return &v
++}
++
++// Deref returns *p or the zero value of T if p is nil.
++func Deref[T any](p *T) T {
++	if p == nil {
++		var zero T
++		return zero
++	}
++	return *p
++}
+diff --git a/internal/pkgutil/randx.go b/internal/pkgutil/randx.go
+new file mode 100644
+index 0000000..a48677b
+--- /dev/null
++++ b/internal/pkgutil/randx.go
+@@ -0,0 +1,21 @@
++package pkgutil
++
++import (
++	"crypto/rand"
++	"encoding/binary"
++	"fmt"
++)
++
++// RandInt returns a cryptographically random int64 in [0, n). Panics if n <= 0.
++func RandInt(n int64) (int64, error) {
++	if n <= 0 {
++		return 0, fmt.Errorf("pkgutil: RandInt n must be > 0, got %d", n)
++	}
++	var b [8]byte
++	if _, err := rand.Read(b[:]); err != nil {
++		return 0, fmt.Errorf("pkgutil: RandInt read: %w", err)
++	}
++	// Mask off the sign bit, then take modulo n. Bias is negligible for n << 2^63.
++	v := int64(binary.BigEndian.Uint64(b[:]) & 0x7FFFFFFFFFFFFFFF)
++	return v % n, nil
++}
+diff --git a/internal/pkgutil/slicex.go b/internal/pkgutil/slicex.go
+new file mode 100644
+index 0000000..756f2b9
+--- /dev/null
++++ b/internal/pkgutil/slicex.go
+@@ -0,0 +1,20 @@
++package pkgutil
++
++// SliceContains reports whether v is present in s.
++func SliceContains[T comparable](s []T, v T) bool {
++	for _, x := range s {
++		if x == v {
++			return true
++		}
++	}
++	return false
++}
++
++// SliceMap returns a new slice with fn applied to each element.
++func SliceMap[T, U any](s []T, fn func(T) U) []U {
++	out := make([]U, len(s))
++	for i, v := range s {
++		out[i] = fn(v)
++	}
++	return out
++}
+diff --git a/internal/pkgutil/stringx.go b/internal/pkgutil/stringx.go
+new file mode 100644
+index 0000000..fff98e2
+--- /dev/null
++++ b/internal/pkgutil/stringx.go
+@@ -0,0 +1,23 @@
++// Package pkgutil provides small general-purpose utility helpers.
++package pkgutil
++
++import "strings"
++
++// StringReverse returns s reversed by runes.
++func StringReverse(s string) string {
++	r := []rune(s)
++	for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
++		r[i], r[j] = r[j], r[i]
++	}
++	return string(r)
++}
++
++// StringContains reports whether substr is within s.
++func StringContains(s, substr string) bool {
++	return strings.Contains(s, substr)
++}
++
++// StringEqualFold reports whether s and t are equal under Unicode case folding.
++func StringEqualFold(s, t string) bool {
++	return strings.EqualFold(s, t)
++}
+diff --git a/internal/pkgutil/timex.go b/internal/pkgutil/timex.go
+new file mode 100644
+index 0000000..279f806
+--- /dev/null
++++ b/internal/pkgutil/timex.go
+@@ -0,0 +1,13 @@
++package pkgutil
++
++import "time"
++
++// Since returns the duration elapsed since t. Wrapper for symmetry with Until.
++func Since(t time.Time) time.Duration {
++	return time.Since(t)
++}
++
++// Until returns the duration until t.
++func Until(t time.Time) time.Duration {
++	return time.Until(t)
++}
+diff --git a/internal/search/query.go b/internal/search/query.go
+new file mode 100644
+index 0000000..9db0e24
+--- /dev/null
++++ b/internal/search/query.go
+@@ -0,0 +1,13 @@
++package search
++
++import (
++	"database/sql"
++	"fmt"
++)
++
++// SearchUsers returns rows matching a case-insensitive name substring.
++// BUG 3: SQL injection via fmt.Sprintf string concatenation.
++func SearchUsers(db *sql.DB, name string) (*sql.Rows, error) {
++	q := fmt.Sprintf("SELECT id, name FROM users WHERE lower(name) LIKE '%%%s%%'", name)
++	return db.Query(q)
++}
+diff --git a/internal/service/service.go b/internal/service/service.go
+new file mode 100644
+index 0000000..8f0783c
+--- /dev/null
++++ b/internal/service/service.go
+@@ -0,0 +1,26 @@
++package service
++
++import (
++	"errors"
++	"fmt"
++
++	"github.com/shubam-disseqt/zreview-e2e-matrix/internal/store"
++)
++
++var ErrNotFound = errors.New("not found")
++
++type Service struct {
++	store *store.Store
++}
++
++func New(s *store.Store) *Service {
++	return &Service{store: s}
++}
++
++func (s *Service) Fetch(id string) (store.Item, error) {
++	it, ok := s.store.Get(id)
++	if !ok {
++		return store.Item{}, fmt.Errorf("fetch %q: %w", id, ErrNotFound)
++	}
++	return it, nil
++}
+diff --git a/internal/service/service_test.go b/internal/service/service_test.go
+new file mode 100644
+index 0000000..d94b87c
+--- /dev/null
++++ b/internal/service/service_test.go
+@@ -0,0 +1,15 @@
++package service
++
++import (
++	"errors"
++	"testing"
++
++	"github.com/shubam-disseqt/zreview-e2e-matrix/internal/store"
++)
++
++func TestFetch_NotFound(t *testing.T) {
++	svc := New(store.New())
++	if _, err := svc.Fetch("missing"); !errors.Is(err, ErrNotFound) {
++		t.Errorf("want ErrNotFound, got %v", err)
++	}
++}
+diff --git a/internal/session/store.go b/internal/session/store.go
+new file mode 100644
+index 0000000..dbb386b
+--- /dev/null
++++ b/internal/session/store.go
+@@ -0,0 +1,41 @@
++package session
++
++import (
++	"sync"
++	"time"
++)
++
++// Store is a naive in-memory session cache.
++type Store struct {
++	mu    sync.RWMutex
++	items map[string]entry
++}
++
++type entry struct {
++	userID    string
++	expiresAt time.Time
++}
++
++func New() *Store {
++	return &Store{items: make(map[string]entry)}
++}
++
++// Set records a session token → user mapping.
++// BUG 5: no eviction path — the map grows without bound (memory leak on high churn).
++func (s *Store) Set(token, userID string, ttl time.Duration) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	s.items[token] = entry{userID: userID, expiresAt: time.Now().Add(ttl)}
++}
++
++// Get returns the user for a session token, or empty string if unknown.
++func (s *Store) Get(token string) string {
++	s.mu.RLock()
++	defer s.mu.RUnlock()
++	e, ok := s.items[token]
++	if !ok {
++		return ""
++	}
++	// BUG 6: expired sessions still return a valid user — no expiry check here.
++	return e.userID
++}
+diff --git a/internal/store/store.go b/internal/store/store.go
+new file mode 100644
+index 0000000..3b5c60e
+--- /dev/null
++++ b/internal/store/store.go
+@@ -0,0 +1,23 @@
++package store
++
++type Item struct {
++	ID   string
++	Name string
++}
++
++type Store struct {
++	items map[string]Item
++}
++
++func New() *Store {
++	return &Store{items: make(map[string]Item)}
++}
++
++func (s *Store) Get(id string) (Item, bool) {
++	it, ok := s.items[id]
++	return it, ok
++}
++
++func (s *Store) Put(it Item) {
++	s.items[it.ID] = it
++}
+diff --git a/internal/timeutil/timeutil.go b/internal/timeutil/timeutil.go
+new file mode 100644
+index 0000000..9f28083
+--- /dev/null
++++ b/internal/timeutil/timeutil.go
+@@ -0,0 +1,44 @@
++package timeutil
++
++import "time"
++
++// FormatDurationCompact renders a duration like "1h23m" or "45s".
++// It omits zero units and never returns an empty string.
++// Sub-second durations render as "<1s".
++func FormatDurationCompact(d time.Duration) string {
++	if d < time.Second {
++		return "<1s"
++	}
++	hours := int(d.Hours())
++	minutes := int(d.Minutes()) % 60
++	seconds := int(d.Seconds()) % 60
++	if hours > 0 && minutes > 0 {
++		return formatHM(hours, minutes)
++	}
++	if hours > 0 {
++		return formatH(hours)
++	}
++	if minutes > 0 {
++		return formatMS(minutes, seconds)
++	}
++	return formatS(seconds)
++}
++
++func formatH(h int) string     { return itoa(h) + "h" }
++func formatHM(h, m int) string { return itoa(h) + "h" + itoa(m) + "m" }
++func formatMS(m, s int) string { return itoa(m) + "m" + itoa(s) + "s" }
++func formatS(s int) string     { return itoa(s) + "s" }
++
++func itoa(n int) string {
++	if n == 0 {
++		return "0"
++	}
++	var buf [11]byte
++	i := len(buf)
++	for n > 0 {
++		i--
++		buf[i] = byte('0' + n%10)
++		n /= 10
++	}
++	return string(buf[i:])
++}
+diff --git a/pricing.go b/pricing.go
+new file mode 100644
+index 0000000..72503e8
+--- /dev/null
++++ b/pricing.go
+@@ -0,0 +1,33 @@
++package main
++
++import (
++	"fmt"
++	"html"
++	"log"
++	"net/http"
++	"os"
++	"strconv"
++)
++
++var APIKey = os.Getenv("STRIPE_KEY")
++
++func PriceHandler(w http.ResponseWriter, r *http.Request) {
++	idStr := r.URL.Query().Get("id")
++	id, err := strconv.Atoi(idStr)
++	if err != nil {
++		http.Error(w, "bad id", http.StatusBadRequest)
++		return
++	}
++	prices := []int{100, 200, 300}
++	if id < 0 || id >= len(prices) {
++		http.Error(w, "not found", http.StatusNotFound)
++		return
++	}
++	price := prices[id]
++	fmt.Fprintf(w, "<p>Item %s price: %d</p>", html.EscapeString(strconv.Itoa(id)), price)
++}
++
++func startPriceServer() {
++	http.HandleFunc("/price", PriceHandler)
++	log.Fatal(http.ListenAndServe(":8080", nil))
++}
