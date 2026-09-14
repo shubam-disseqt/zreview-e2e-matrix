@@ -1,6 +1,7 @@
 package legacy
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 )
@@ -12,25 +13,25 @@ type Config struct {
 	Timeout int
 }
 
-// BUG: reads env at package init with no default.
-// If LEGACY_PORT is unset or unparseable, strconv.Atoi returns 0 + error,
-// but we ignore the error and Panic when Port <= 0.
-var defaultConfig = mustLoad()
+const defaultPort = 8080
 
-func mustLoad() *Config {
-	p, _ := strconv.Atoi(os.Getenv("LEGACY_PORT"))
-	if p <= 0 {
-		panic("LEGACY_PORT must be a positive integer")
+// Load returns a config from env with a safe default port.
+// Fails cleanly with a descriptive error rather than panicking at init.
+func Load() (*Config, error) {
+	port := defaultPort
+	if raw := os.Getenv("LEGACY_PORT"); raw != "" {
+		p, err := strconv.Atoi(raw)
+		if err != nil || p <= 0 {
+			return nil, fmt.Errorf("LEGACY_PORT invalid: %q", raw)
+		}
+		port = p
 	}
 	return &Config{
-		Port:    p,
+		Port:    port,
 		DBHost:  os.Getenv("LEGACY_DB_HOST"),
 		Timeout: 30,
-	}
+	}, nil
 }
-
-// Default returns the initialized default config.
-func Default() *Config { return defaultConfig }
 
 // WithPort returns a copy with a different port.
 func (c *Config) WithPort(p int) *Config {

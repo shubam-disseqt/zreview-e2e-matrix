@@ -13,11 +13,12 @@ type Session struct {
 	CreatedAt time.Time
 }
 
-// NewSession creates a new session with a random ID.
-// BUG: only 4 bytes of entropy => 32 bits, brute-forceable.
-// crypto/rand is used correctly, but the length is far too short for a session token.
+// sessionTokenBytes is 32 bytes = 256 bits of entropy.
+const sessionTokenBytes = 32
+
+// NewSession creates a new session with a random, sufficiently long ID.
 func NewSession(userID int) (*Session, error) {
-	b := make([]byte, 4)
+	b := make([]byte, sessionTokenBytes)
 	if _, err := rand.Read(b); err != nil {
 		return nil, err
 	}

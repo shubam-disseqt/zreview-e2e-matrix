@@ -1,6 +1,7 @@
 package legacy
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -12,19 +13,19 @@ type Record struct {
 	Note   string
 }
 
-// ParseRecord parses "id,amount,note".
-// BUG: strconv.Atoi errors ignored — a non-numeric field silently becomes 0.
-// Downstream logic treats 0 as valid, hiding malformed input.
-func ParseRecord(line string) Record {
+// ParseRecord parses "id,amount,note", returning an error on malformed input.
+func ParseRecord(line string) (Record, error) {
 	parts := strings.SplitN(line, ",", 3)
 	if len(parts) < 3 {
-		return Record{}
+		return Record{}, fmt.Errorf("expected 3 fields, got %d", len(parts))
 	}
-	id, _ := strconv.Atoi(parts[0])
-	amount, _ := strconv.Atoi(parts[1])
-	return Record{
-		ID:     id,
-		Amount: amount,
-		Note:   parts[2],
+	id, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return Record{}, fmt.Errorf("invalid id %q: %w", parts[0], err)
 	}
+	amount, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return Record{}, fmt.Errorf("invalid amount %q: %w", parts[1], err)
+	}
+	return Record{ID: id, Amount: amount, Note: parts[2]}, nil
 }

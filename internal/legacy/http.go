@@ -12,11 +12,10 @@ type UserLookup struct {
 }
 
 // Handle serves GET /user?name=...
-// BUG: SQL injection via string concatenation with untrusted input.
+// Uses a parameterized query — no string concatenation with untrusted input.
 func (u *UserLookup) Handle(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
-	query := "SELECT id, email FROM users WHERE name = '" + name + "'"
-	row := u.DB.QueryRow(query)
+	row := u.DB.QueryRow("SELECT id, email FROM users WHERE name = ?", name)
 
 	var id int
 	var email string

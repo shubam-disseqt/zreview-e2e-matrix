@@ -1,31 +1,58 @@
 package legacy
 
-import "sync"
+import (
+	"container/list"
+	"sync"
+)
 
-// Cache is a naive in-memory string cache.
-// BUG: unbounded map — no eviction, no max size => memory leak.
-// Every unique key held forever for the life of the process.
+// Cache is a bounded LRU string cache.
 type Cache struct {
-	mu sync.RWMutex
-	m  map[string]string
+	mu   sync.Mutex
+	max  int
+	m    map[string]*list.Element
+	ll   *list.List
 }
 
-// NewCache returns an empty cache.
-func NewCache() *Cache {
-	return &Cache{m: make(map[string]string)}
+type entry struct {
+	k, v string
 }
 
-// Set stores v under k.
+// NewCache returns an LRU cache holding at most max entries.
+func NewCache(max int) *Cache {
+	if max <= 0 {
+		max = 1024
+	}
+	return &Cache{max: max, m: make(map[string]*list.Element, max), ll: list.New()}
+}
+
+// Set stores v under k, evicting the oldest entry once full.
 func (c *Cache) Set(k, v string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.m[k] = v
+	if el, ok := c.m[k]; ok {
+		el.Value.(*entry).v = v
+		c.ll.MoveToFront(el)
+		return
+	}
+	el := c.ll.PushFront(&entry{k: k, v: v})
+	c.m[k] = el
+	if c.ll.Len() > c.max {
+		old := c.ll.Back()
+		if old != nil {
+			c.ll.Remove(old)
+			delete(c.m, old.Value.(*entry).k)
+		}
+	}
 }
 
-// Get returns the value for k.
+// Get returns the value for k and marks it recently used.
 func (c *Cache) Get(k string) (string, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	v, ok := c.m[k]
-	return v, ok
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	el, ok := c.m[k]
+	if !ok {
+		return "", false
+	}
+	c.ll.MoveToFront(el)
+	return el.Value.(*entry).v, true
 }

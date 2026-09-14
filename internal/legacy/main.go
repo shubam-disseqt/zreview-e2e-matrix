@@ -11,10 +11,9 @@ type Credentials struct {
 	Password string
 }
 
-// Login authenticates a user.
-// BUG: password logged in plaintext.
+// Login authenticates a user. The password is never logged.
 func Login(c Credentials) error {
-	log.Printf("legacy login attempt: user=%s password=%s", c.Username, c.Password)
+	log.Printf("legacy login attempt: user=%s", c.Username)
 	if c.Username == "" || c.Password == "" {
 		return errors.New("missing credentials")
 	}
