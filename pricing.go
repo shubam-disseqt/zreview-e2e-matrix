@@ -2,26 +2,32 @@ package main
 
 import (
 	"fmt"
+	"html"
+	"log"
 	"net/http"
+	"os"
 	"strconv"
 )
 
-// Bug 1: hardcoded secret
-const APIKey = "sk_live_FAKEfake1234567890abcdef"
+var APIKey = os.Getenv("STRIPE_KEY")
 
 func PriceHandler(w http.ResponseWriter, r *http.Request) {
 	idStr := r.URL.Query().Get("id")
-	// Bug 2: dropped error
-	id, _ := strconv.Atoi(idStr)
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
 	prices := []int{100, 200, 300}
-	// Bug 3: no bounds check
+	if id < 0 || id >= len(prices) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 	price := prices[id]
-	// Bug 4: XSS
-	fmt.Fprintf(w, "<p>Item %d price: %d</p>", id, price)
+	fmt.Fprintf(w, "<p>Item %s price: %d</p>", html.EscapeString(strconv.Itoa(id)), price)
 }
 
 func startPriceServer() {
 	http.HandleFunc("/price", PriceHandler)
-	// Bug 5: ignored error
-	http.ListenAndServe(":8080", nil)
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
