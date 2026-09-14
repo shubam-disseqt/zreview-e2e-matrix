@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/shubam-disseqt/zreview-e2e-matrix/internal/store"
 )
@@ -19,7 +20,7 @@ func New(s *store.Store) *Service {
 func (s *Service) Fetch(id string) (store.Item, error) {
 	it, ok := s.store.Get(id)
 	if !ok {
-		return store.Item{}, ErrNotFound
+		return store.Item{}, fmt.Errorf("fetch %q: %w", id, ErrNotFound)
 	}
 	return it, nil
 }
