@@ -28,7 +28,8 @@ func SearchProducts(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id int
 		var price float64
-		if err := rows.Scan(&id, &price); err != nil {
+if err := rows.Scan(&id, &price); err != nil {
+			http.Error(w, fmt.Errorf("scanning row: %w", err).Error(), http.StatusInternalServerError)
 			return
 		}
 		fmt.Fprintf(w, `{"id":%d,"price":%.2f}`+"\n", id, price)
