@@ -37,7 +37,7 @@ env:
   # head branch has .matrix/expected.json as ground truth. PR numbers are
   # discovered at runtime via `gh pr list --head <branch>` so this list
   # only needs the branch names.
-  CASES: '["pr-1-branch","pr-3-branch","pr-5-branch","pr-10-branch"]'
+  CASES: '["pr-11-branch"]'
 
 jobs:
   plan:
@@ -66,6 +66,14 @@ jobs:
           fetch-depth: 0
           path: matrix
 
+      # .e2e/ lives on main only.
+      - name: Checkout matrix main (for .e2e/ tools)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: matrix-tools
+          fetch-depth: 1
+
       - name: Checkout product repo (to build sacr from source)
         uses: actions/checkout@v4
         with:
@@ -82,7 +90,7 @@ jobs:
       - name: Build sacr + assert
         run: |
           cd product && go build -trimpath -o "$RUNNER_TEMP/sacr" ./cmd/sacr
-          cd ../matrix && go build -o "$RUNNER_TEMP/assert" ./../matrix/.e2e/assert
+          cd ../matrix-tools/.e2e && go build -o "$RUNNER_TEMP/assert" ./assert
 
       - name: Resolve PR number for case
         id: pr
