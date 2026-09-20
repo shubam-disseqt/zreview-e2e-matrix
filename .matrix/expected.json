@@ -1,0 +1,36 @@
+{
+  "case": "pr-3-branch",
+  "description": "feat(pricing): /price endpoint with 5 seeded bugs (hardcoded secret, dropped error, oob index, XSS, ignored listen error).",
+  "findings": [
+    {
+      "path": "pricing.go",
+      "start_line": 9, "end_line": 9,
+      "category": "security", "min_severity": "critical",
+      "description": "hardcoded API key"
+    },
+    {
+      "path": "pricing.go",
+      "start_line": 14, "end_line": 14,
+      "category": "bug", "min_severity": "medium",
+      "description": "strconv.Atoi error dropped with _"
+    },
+    {
+      "path": "pricing.go",
+      "start_line": 17, "end_line": 17,
+      "category": "bug", "min_severity": "high",
+      "description": "prices[id] indexed without bounds check"
+    },
+    {
+      "path": "pricing.go",
+      "start_line": 19, "end_line": 19,
+      "category": "security", "min_severity": "high",
+      "description": "user input reflected into HTML without escaping (XSS)"
+    },
+    {
+      "path": "pricing.go",
+      "start_line": 25, "end_line": 25,
+      "category": "bug", "min_severity": "medium",
+      "description": "http.ListenAndServe error ignored"
+    }
+  ]
+}
