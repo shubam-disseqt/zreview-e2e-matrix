@@ -41,7 +41,7 @@ jobs:
       - name: sacr review
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          SACR_MODEL: gpt-4o-mini
+          SACR_MODEL: gpt-4o
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         # sacr's --pr controls posting only; resolveDiffs falls back to
