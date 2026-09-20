@@ -44,8 +44,13 @@ jobs:
           SACR_MODEL: gpt-4o-mini
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+        # sacr's --pr controls posting only; resolveDiffs falls back to
+        # workspace mode (empty in CI) when --from/--to aren't set.
+        # Pass base+head SHAs explicitly so the diff provider sees the PR.
         run: |
           "$RUNNER_TEMP/sacr" review \
             --pr ${{ github.event.pull_request.number }} \
+            --from ${{ github.event.pull_request.base.sha }} \
+            --to ${{ github.event.pull_request.head.sha }} \
             --format github \
             --min-severity LOW
