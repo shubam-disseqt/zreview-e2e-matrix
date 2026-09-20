@@ -1,0 +1,18 @@
+{
+  "case": "pr-5-branch",
+  "description": "feat(auth): session + middleware. 2 seeded bugs (weak token entropy, timing-vulnerable token compare).",
+  "findings": [
+    {
+      "path": "internal/auth/session.go",
+      "start_line": 16, "end_line": 24,
+      "category": "security", "min_severity": "high",
+      "description": "8-byte session token — insufficient entropy for auth"
+    },
+    {
+      "path": "internal/auth/session.go",
+      "start_line": 27, "end_line": 32,
+      "category": "security", "min_severity": "high",
+      "description": "token comparison uses == not constant-time"
+    }
+  ]
+}
