@@ -69,8 +69,8 @@ jobs:
       - name: Checkout product repo (to build sacr from source)
         uses: actions/checkout@v4
         with:
+          # Public repo — default GITHUB_TOKEN can read it, no PAT needed.
           repository: shubam-disseqt/shubam-ai-code-reviewer
-          token: ${{ secrets.PRODUCT_REPO_TOKEN }}
           path: product
           fetch-depth: 1
 

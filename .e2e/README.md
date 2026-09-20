@@ -70,9 +70,10 @@ Extras (no expected match) are reported but do not fail the case.
 | Secret | Purpose |
 |---|---|
 | `OPENAI_API_KEY` **or** `ANTHROPIC_API_KEY` | LLM provider for sacr |
-| `PRODUCT_REPO_TOKEN` | fine-grained PAT with `contents: read` on `shubam-ai-code-reviewer` — used to check out product repo and build sacr from source. Remove once sacr publishes a `v*` release to the Marketplace and this workflow can `uses:` the Action. |
 
-No secrets are needed on the product repo. Cross-repo trigger is not used; this workflow is self-contained.
+That's the only one. The product repo is public, so `actions/checkout@v4` reads it with the default `GITHUB_TOKEN` — no PAT needed. Once sacr publishes a `v*` release, we'll swap `go build ./cmd/sacr` for `uses: shubam-disseqt/shubam-ai-code-reviewer@v0.2.0` and even the product-repo checkout goes away.
+
+No secrets are needed on the product repo — cross-repo triggers are not used; this workflow is self-contained.
 
 ## Adding a case
 
