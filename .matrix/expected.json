@@ -1,0 +1,5 @@
+{
+  "case": "pr-10-branch",
+  "description": "chore(deps): add google/uuid. Zero seeded bugs. Verifies sacr does not fabricate findings on deps-only PRs.",
+  "findings": []
+}
