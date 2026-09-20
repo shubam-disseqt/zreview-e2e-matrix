@@ -16,7 +16,8 @@ func SearchProducts(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	q := fmt.Sprintf("SELECT id, price FROM products WHERE name = '%s'", name)
+q := "SELECT id, price FROM products WHERE name = ?"
+rows, err := db.Query(q, name)
 	rows, err := db.Query(q)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
