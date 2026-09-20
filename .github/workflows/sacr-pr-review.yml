@@ -1,0 +1,51 @@
+name: sacr PR review
+
+# Runs sacr on every PR to this repo and posts inline review comments.
+# This is what a real consumer of sacr would look like.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: sacr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR (merge commit)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout product repo (sacr source)
+        uses: actions/checkout@v4
+        with:
+          repository: shubam-disseqt/shubam-ai-code-reviewer
+          path: .product
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: .product/go.mod
+
+      - name: Build sacr
+        run: cd .product && go build -trimpath -o "$RUNNER_TEMP/sacr" ./cmd/sacr
+
+      - name: sacr review
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SACR_MODEL: gpt-4o-mini
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          "$RUNNER_TEMP/sacr" review \
+            --pr ${{ github.event.pull_request.number }} \
+            --format github \
+            --min-severity LOW
