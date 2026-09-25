@@ -52,18 +52,6 @@ jobs:
           "$HOME/go/bin/govulncheck" -version
           semgrep --version
 
-      # Diagnostic: sacr reports govulncheck:0 on this repo while a local run
-      # finds traces into internal/httpclient. Print the raw tool output so
-      # the two can be compared.
-      - name: govulncheck raw output (diagnostic)
-        run: |
-          echo "toolchain: $(go version)"
-          govulncheck ./... > "$RUNNER_TEMP/govuln.txt" 2>&1 || echo "govulncheck exit=$?"
-          head -40 "$RUNNER_TEMP/govuln.txt"
-          govulncheck -json ./... 2>/dev/null > "$RUNNER_TEMP/govuln.ndjson" || true
-          echo "json finding records: $(grep -c '"finding"' "$RUNNER_TEMP/govuln.ndjson")"
-          echo "json user-frame records: $(grep -c 'internal/httpclient' "$RUNNER_TEMP/govuln.ndjson")"
-
       - name: sacr review
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
