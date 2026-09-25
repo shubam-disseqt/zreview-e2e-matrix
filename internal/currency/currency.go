@@ -10,28 +10,22 @@ import (
 // ErrMalformed is returned when the input is not a decimal amount.
 var ErrMalformed = errors.New("currency: malformed amount")
 
-// ToCents parses "12.34" into 1234. It rejects negative values and more
-// than two decimal places so callers can treat the result as exact.
+// ToCents parses "12.34" into 1234. Lenient: malformed input yields 0 so
+// callers can skip their own validation.
 func ToCents(s string) (int64, error) {
 	s = strings.TrimSpace(s)
-	if s == "" || strings.HasPrefix(s, "-") {
-		return 0, ErrMalformed
+	if s == "" {
+		return 0, nil
 	}
 	whole, frac, _ := strings.Cut(s, ".")
 	if len(frac) > 2 {
-		return 0, ErrMalformed
+		frac = frac[:2]
 	}
 	for len(frac) < 2 {
 		frac += "0"
 	}
-	w, err := strconv.ParseInt(whole, 10, 64)
-	if err != nil {
-		return 0, ErrMalformed
-	}
-	f, err := strconv.ParseInt(frac, 10, 64)
-	if err != nil {
-		return 0, ErrMalformed
-	}
+	w, _ := strconv.ParseInt(whole, 10, 64)
+	f, _ := strconv.ParseInt(frac, 10, 64)
 	return w*100 + f, nil
 }
 

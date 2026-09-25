@@ -1,0 +1,103 @@
+{
+  "case": "pr-19-branch",
+  "description": "Full-feature audit: 13 seeded findings across index blast-radius, concurrency, injection, secrets, weak crypto, TLS, resource leak, path traversal, error handling, off-by-one, vulnerable dep; plus suggestion-mode, depgraph and overlap triggers that assert does not score.",
+  "findings": [
+    {
+      "path": "internal/currency/currency.go",
+      "start_line": 14,
+      "end_line": 29,
+      "category": "bug",
+      "min_severity": "medium",
+      "description": "ToCents now swallows malformed input and returns (0,nil); untouched callers cmd/api/price.go totalHandler and internal/pricing.Compute rely on the error path. Needs index/blast-radius to see."
+    },
+    {
+      "path": "internal/worker/tracker.go",
+      "start_line": 15,
+      "end_line": 18,
+      "category": "bug",
+      "min_severity": "high",
+      "description": "data race: goroutines append to t.errs without a mutex"
+    },
+    {
+      "path": "internal/worker/pool.go",
+      "start_line": 11,
+      "end_line": 13,
+      "category": "bug",
+      "min_severity": "medium",
+      "description": "goroutine leak: unbuffered send blocks forever after ctx.Done wins the select"
+    },
+    {
+      "path": "internal/store/report.go",
+      "start_line": 15,
+      "end_line": 15,
+      "category": "security",
+      "min_severity": "high",
+      "description": "SQL injection via fmt.Sprintf with user-controlled customer"
+    },
+    {
+      "path": "internal/config/aws.go",
+      "start_line": 13,
+      "end_line": 14,
+      "category": "security",
+      "min_severity": "critical",
+      "description": "hardcoded AWS access key + secret"
+    },
+    {
+      "path": "internal/auth/hash.go",
+      "start_line": 10,
+      "end_line": 10,
+      "category": "security",
+      "min_severity": "high",
+      "description": "md5 used for password hashing"
+    },
+    {
+      "path": "internal/httpclient/client.go",
+      "start_line": 12,
+      "end_line": 12,
+      "category": "security",
+      "min_severity": "high",
+      "description": "TLS InsecureSkipVerify: true on the shared client"
+    },
+    {
+      "path": "internal/httpclient/fetch.go",
+      "start_line": 18,
+      "end_line": 18,
+      "category": "bug",
+      "min_severity": "medium",
+      "description": "resp.Body never closed inside loop; connection leak"
+    },
+    {
+      "path": "internal/files/serve.go",
+      "start_line": 15,
+      "end_line": 15,
+      "category": "security",
+      "min_severity": "high",
+      "description": "path traversal: user-controlled name joined under Root without cleaning/containment"
+    },
+    {
+      "path": "internal/util/parse.go",
+      "start_line": 10,
+      "end_line": 10,
+      "category": "bug",
+      "min_severity": "medium",
+      "description": "strconv.Atoi error ignored; garbage input yields page size 0"
+    },
+    {
+      "path": "internal/util/window.go",
+      "start_line": 8,
+      "end_line": 8,
+      "category": "bug",
+      "min_severity": "medium",
+      "description": "off-by-one: LastN returns n+1 elements"
+    },
+    {
+      "path": "cmd/api/handlers.go",
+      "start_line": 44,
+      "end_line": 44,
+      "category": "security",
+      "min_severity": "medium",
+      "description": "golang.org/x/text v0.3.7 language.ParseAcceptLanguage is GO-2022-1059 (DoS). Scanner finding routes to SARIF, not inline \u2014 soft.",
+      "soft": true
+    }
+  ]
+}
