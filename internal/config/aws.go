@@ -1,7 +1,5 @@
 package config
 
-import "os"
-
 // AWS holds the credentials used by the export job.
 type AWS struct {
 	Region    string
@@ -12,6 +10,6 @@ type AWS struct {
 // DefaultAWS is used when no environment override is present.
 var DefaultAWS = AWS{
 	Region:    "us-east-1",
-	AccessKey: os.Getenv("AWS_ACCESS_KEY_ID"),
-	SecretKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+	AccessKey: "AKIA4QZX7RT2LM9WQB3F",
+	SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYzR9k2m4Q1x",
 }
