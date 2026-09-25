@@ -56,6 +56,8 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SACR_MODEL: gpt-4o-mini
+          # DEBUG surfaces per-scanner exec errors, which INFO hides.
+          SACR_LOG_LEVEL: DEBUG
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         # sacr's --pr controls posting only; resolveDiffs falls back to

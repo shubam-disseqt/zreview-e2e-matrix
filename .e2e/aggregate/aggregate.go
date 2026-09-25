@@ -26,23 +26,24 @@ import (
 )
 
 type Result struct {
-	Case            string   `json:"case"`
-	Description     string   `json:"description,omitempty"`
-	ExpectedTotal   int      `json:"expected_total"`
-	ExpectedHard    int      `json:"expected_hard"`
-	Runs            int      `json:"runs"`
-	Matched         int      `json:"matched"`
-	MatchedHard     int      `json:"matched_hard"`
-	MatchedUnion    int      `json:"matched_union"`
-	UnionRecall     float64  `json:"union_recall"`
-	SoftMisses      []string `json:"soft_misses,omitempty"`
-	HardMisses      []string `json:"hard_misses,omitempty"`
-	ExtraFindings   int      `json:"extra_findings"`
-	Recall          float64  `json:"recall"`
-	HardRecall      float64  `json:"hard_recall"`
-	Passed          bool     `json:"passed"`
-	MissedCritical  bool     `json:"missed_critical"`
-	CriticalSummary string   `json:"critical_summary,omitempty"`
+	Case             string   `json:"case"`
+	Description      string   `json:"description,omitempty"`
+	ExpectedTotal    int      `json:"expected_total"`
+	ExpectedHard     int      `json:"expected_hard"`
+	Runs             int      `json:"runs"`
+	Matched          int      `json:"matched"`
+	MatchedHard      int      `json:"matched_hard"`
+	MatchedUnion     int      `json:"matched_union"`
+	MatchedUnionHard int      `json:"matched_union_hard"`
+	UnionRecall      float64  `json:"union_recall"`
+	SoftMisses       []string `json:"soft_misses,omitempty"`
+	HardMisses       []string `json:"hard_misses,omitempty"`
+	ExtraFindings    int      `json:"extra_findings"`
+	Recall           float64  `json:"recall"`
+	HardRecall       float64  `json:"hard_recall"`
+	Passed           bool     `json:"passed"`
+	MissedCritical   bool     `json:"missed_critical"`
+	CriticalSummary  string   `json:"critical_summary,omitempty"`
 }
 
 type Summary struct {
@@ -74,7 +75,7 @@ func Aggregate(results []Result, minRecall float64) Summary {
 		}
 		s.ExpectedHardTotal += r.ExpectedHard
 		s.MatchedHardTotal += r.MatchedHard
-		s.MatchedUnionTotal += r.MatchedUnion
+		s.MatchedUnionTotal += r.MatchedUnionHard
 		s.ExtraFindingsTotal += r.ExtraFindings
 		if r.MissedCritical {
 			s.MissedCriticalIn = append(s.MissedCriticalIn, r.Case)
