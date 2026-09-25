@@ -81,23 +81,24 @@ type Actual struct {
 // (intersection) and drive the gate; MatchedUnion counts those caught in
 // at least one run.
 type Result struct {
-	Case            string   `json:"case"`
-	Description     string   `json:"description,omitempty"`
-	Runs            int      `json:"runs"`
-	ExpectedTotal   int      `json:"expected_total"`
-	ExpectedHard    int      `json:"expected_hard"`
-	Matched         int      `json:"matched"`
-	MatchedHard     int      `json:"matched_hard"`
-	MatchedUnion    int      `json:"matched_union"`
-	UnionRecall     float64  `json:"union_recall"`
-	SoftMisses      []string `json:"soft_misses,omitempty"`
-	HardMisses      []string `json:"hard_misses,omitempty"`
-	ExtraFindings   int      `json:"extra_findings"`
-	Recall          float64  `json:"recall"`
-	HardRecall      float64  `json:"hard_recall"`
-	Passed          bool     `json:"passed"`
-	MissedCritical  bool     `json:"missed_critical"`
-	CriticalSummary string   `json:"critical_summary,omitempty"`
+	Case             string   `json:"case"`
+	Description      string   `json:"description,omitempty"`
+	Runs             int      `json:"runs"`
+	ExpectedTotal    int      `json:"expected_total"`
+	ExpectedHard     int      `json:"expected_hard"`
+	Matched          int      `json:"matched"`
+	MatchedHard      int      `json:"matched_hard"`
+	MatchedUnion     int      `json:"matched_union"`
+	MatchedUnionHard int      `json:"matched_union_hard"`
+	UnionRecall      float64  `json:"union_recall"` // hard, any run
+	SoftMisses       []string `json:"soft_misses,omitempty"`
+	HardMisses       []string `json:"hard_misses,omitempty"`
+	ExtraFindings    int      `json:"extra_findings"`
+	Recall           float64  `json:"recall"`
+	HardRecall       float64  `json:"hard_recall"`
+	Passed           bool     `json:"passed"`
+	MissedCritical   bool     `json:"missed_critical"`
+	CriticalSummary  string   `json:"critical_summary,omitempty"`
 }
 
 // Match reports whether actual satisfies expected under the rules above.
@@ -180,6 +181,9 @@ func Assert(caseName string, exp ExpectedFile, runs ...ActualFile) Result {
 		}
 		if inAny[ei] {
 			r.MatchedUnion++
+			if !e.Soft {
+				r.MatchedUnionHard++
+			}
 		}
 		if inAll[ei] {
 			r.Matched++
@@ -205,12 +209,13 @@ func Assert(caseName string, exp ExpectedFile, runs ...ActualFile) Result {
 	}
 	if r.ExpectedTotal > 0 {
 		r.Recall = float64(r.Matched) / float64(r.ExpectedTotal)
-		r.UnionRecall = float64(r.MatchedUnion) / float64(r.ExpectedTotal)
 	}
 	if r.ExpectedHard > 0 {
 		r.HardRecall = float64(r.MatchedHard) / float64(r.ExpectedHard)
+		r.UnionRecall = float64(r.MatchedUnionHard) / float64(r.ExpectedHard)
 	} else {
 		r.HardRecall = 1.0
+		r.UnionRecall = 1.0
 	}
 	r.Passed = r.ExpectedHard == r.MatchedHard && !r.MissedCritical
 	return r
