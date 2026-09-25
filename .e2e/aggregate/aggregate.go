@@ -30,8 +30,11 @@ type Result struct {
 	Description     string   `json:"description,omitempty"`
 	ExpectedTotal   int      `json:"expected_total"`
 	ExpectedHard    int      `json:"expected_hard"`
+	Runs            int      `json:"runs"`
 	Matched         int      `json:"matched"`
 	MatchedHard     int      `json:"matched_hard"`
+	MatchedUnion    int      `json:"matched_union"`
+	UnionRecall     float64  `json:"union_recall"`
 	SoftMisses      []string `json:"soft_misses,omitempty"`
 	HardMisses      []string `json:"hard_misses,omitempty"`
 	ExtraFindings   int      `json:"extra_findings"`
@@ -49,6 +52,8 @@ type Summary struct {
 	ExpectedHardTotal  int      `json:"expected_hard_total"`
 	MatchedHardTotal   int      `json:"matched_hard_total"`
 	HardRecall         float64  `json:"hard_recall"`
+	MatchedUnionTotal  int      `json:"matched_union_total"`
+	UnionRecall        float64  `json:"union_recall"`
 	MinRecallThreshold float64  `json:"min_recall_threshold"`
 	MissedCriticalIn   []string `json:"missed_critical_in,omitempty"`
 	ExtraFindingsTotal int      `json:"extra_findings_total"`
@@ -69,6 +74,7 @@ func Aggregate(results []Result, minRecall float64) Summary {
 		}
 		s.ExpectedHardTotal += r.ExpectedHard
 		s.MatchedHardTotal += r.MatchedHard
+		s.MatchedUnionTotal += r.MatchedUnion
 		s.ExtraFindingsTotal += r.ExtraFindings
 		if r.MissedCritical {
 			s.MissedCriticalIn = append(s.MissedCriticalIn, r.Case)
@@ -76,6 +82,7 @@ func Aggregate(results []Result, minRecall float64) Summary {
 	}
 	if s.ExpectedHardTotal > 0 {
 		s.HardRecall = float64(s.MatchedHardTotal) / float64(s.ExpectedHardTotal)
+		s.UnionRecall = float64(s.MatchedUnionTotal) / float64(s.ExpectedHardTotal)
 	} else {
 		s.HardRecall = 1.0
 	}
@@ -155,6 +162,8 @@ func renderMarkdown(s Summary) string {
 	out := fmt.Sprintf("# sacr E2E matrix — %s\n\n", status)
 	out += fmt.Sprintf("- Hard recall: **%.0f%%** (matched %d / expected %d, threshold %.0f%%)\n",
 		s.HardRecall*100, s.MatchedHardTotal, s.ExpectedHardTotal, s.MinRecallThreshold*100)
+	out += fmt.Sprintf("- Union recall (caught in at least one run): **%.0f%%** (matched %d / expected %d)\n",
+		s.UnionRecall*100, s.MatchedUnionTotal, s.ExpectedHardTotal)
 	out += fmt.Sprintf("- Cases: %d passed / %d failed\n", s.CasesPassed, s.CasesFailed)
 	out += fmt.Sprintf("- Extra findings across all cases: %d\n", s.ExtraFindingsTotal)
 	if len(s.MissedCriticalIn) > 0 {

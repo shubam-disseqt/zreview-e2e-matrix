@@ -76,14 +76,20 @@ type Actual struct {
 	Content   string `json:"content"`
 }
 
-// Result is the assert program's structured output.
+// Result is the assert program's structured output. With several -actual
+// files, Matched/MatchedHard count expected findings caught in EVERY run
+// (intersection) and drive the gate; MatchedUnion counts those caught in
+// at least one run.
 type Result struct {
 	Case            string   `json:"case"`
 	Description     string   `json:"description,omitempty"`
+	Runs            int      `json:"runs"`
 	ExpectedTotal   int      `json:"expected_total"`
 	ExpectedHard    int      `json:"expected_hard"`
 	Matched         int      `json:"matched"`
 	MatchedHard     int      `json:"matched_hard"`
+	MatchedUnion    int      `json:"matched_union"`
+	UnionRecall     float64  `json:"union_recall"`
 	SoftMisses      []string `json:"soft_misses,omitempty"`
 	HardMisses      []string `json:"hard_misses,omitempty"`
 	ExtraFindings   int      `json:"extra_findings"`
@@ -121,30 +127,61 @@ func Match(exp Expected, act Actual) bool {
 	return maxInt(expStart, act.StartLine) <= minInt(expEnd, act.EndLine)
 }
 
-// Assert consumes both files and produces a Result.
-func Assert(caseName string, exp ExpectedFile, act ActualFile) Result {
-	r := Result{
-		Case:          caseName,
-		Description:   exp.Description,
-		ExpectedTotal: len(exp.Findings),
-	}
+// matchRun reports, per expected finding, whether one run caught it, and
+// how many of the run's comments matched nothing (extras).
+func matchRun(exp ExpectedFile, act ActualFile) (hits []bool, extras int) {
+	hits = make([]bool, len(exp.Findings))
 	usedActual := make([]bool, len(act.Comments))
-	for _, e := range exp.Findings {
-		if !e.Soft {
-			r.ExpectedHard++
-		}
-		matched := false
+	for ei, e := range exp.Findings {
 		for i, a := range act.Comments {
 			if usedActual[i] {
 				continue
 			}
 			if Match(e, a) {
 				usedActual[i] = true
-				matched = true
+				hits[ei] = true
 				break
 			}
 		}
-		if matched {
+	}
+	for _, used := range usedActual {
+		if !used {
+			extras++
+		}
+	}
+	return hits, extras
+}
+
+// Assert consumes one expected file and one or more actual runs. A finding
+// counts as matched only when every run caught it; union is reported too.
+func Assert(caseName string, exp ExpectedFile, runs ...ActualFile) Result {
+	r := Result{
+		Case:          caseName,
+		Description:   exp.Description,
+		Runs:          len(runs),
+		ExpectedTotal: len(exp.Findings),
+	}
+	inAll := make([]bool, len(exp.Findings))
+	inAny := make([]bool, len(exp.Findings))
+	for i := range inAll {
+		inAll[i] = len(runs) > 0
+	}
+	for _, act := range runs {
+		hits, extras := matchRun(exp, act)
+		r.ExtraFindings += extras
+		for i, h := range hits {
+			inAll[i] = inAll[i] && h
+			inAny[i] = inAny[i] || h
+		}
+	}
+	for ei, e := range exp.Findings {
+		if !e.Soft {
+			r.ExpectedHard++
+		}
+		if inAny[ei] {
+			r.MatchedUnion++
+		}
+		if inAll[ei] {
 			r.Matched++
 			if !e.Soft {
 				r.MatchedHard++
@@ -166,13 +203,9 @@ func Assert(caseName string, exp ExpectedFile, act ActualFile) Result {
 			r.CriticalSummary += miss
 		}
 	}
-	for _, used := range usedActual {
-		if !used {
-			r.ExtraFindings++
-		}
-	}
 	if r.ExpectedTotal > 0 {
 		r.Recall = float64(r.Matched) / float64(r.ExpectedTotal)
+		r.UnionRecall = float64(r.MatchedUnion) / float64(r.ExpectedTotal)
 	}
 	if r.ExpectedHard > 0 {
 		r.HardRecall = float64(r.MatchedHard) / float64(r.ExpectedHard)
@@ -208,7 +241,11 @@ func minInt(a, b int) int {
 
 func main() {
 	expectedPath := flag.String("expected", ".matrix/expected.json", "path to expected.json")
-	actualPath := flag.String("actual", "out.json", "path to sacr review json output")
+	var actualPaths []string
+	flag.Func("actual", "path to sacr review json output (repeat for multiple runs; the gate uses their intersection)", func(v string) error {
+		actualPaths = append(actualPaths, v)
+		return nil
+	})
 	caseName := flag.String("case", "", "case name (defaults to the expected.json 'case' field or the parent dir)")
 	asJSON := flag.Bool("json", false, "emit machine-readable JSON instead of markdown")
 	flag.Parse()
@@ -218,10 +255,17 @@ func main() {
 		fmt.Fprintf(os.Stderr, "assert: read expected: %v\n", err)
 		os.Exit(2)
 	}
-	act, err := readActual(*actualPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "assert: read actual: %v\n", err)
-		os.Exit(2)
+	if len(actualPaths) == 0 {
+		actualPaths = []string{"out.json"}
+	}
+	runs := make([]ActualFile, 0, len(actualPaths))
+	for _, ap := range actualPaths {
+		act, err := readActual(ap)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "assert: read actual %s: %v\n", ap, err)
+			os.Exit(2)
+		}
+		runs = append(runs, act)
 	}
 	name := *caseName
 	if name == "" {
@@ -231,7 +275,7 @@ func main() {
 		name = filepath.Base(filepath.Dir(*expectedPath))
 	}
 
-	r := Assert(name, exp, act)
+	r := Assert(name, exp, runs...)
 
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -278,9 +322,11 @@ func writeMarkdown(w *os.File, r Result) {
 	if r.Description != "" {
 		fmt.Fprintf(w, "%s\n\n", r.Description)
 	}
+	fmt.Fprintf(w, "- runs: %d\n", r.Runs)
 	fmt.Fprintf(w, "- expected (hard): %d\n", r.ExpectedHard)
-	fmt.Fprintf(w, "- matched (hard): %d\n", r.MatchedHard)
-	fmt.Fprintf(w, "- hard recall: %.0f%%\n", r.HardRecall*100)
+	fmt.Fprintf(w, "- matched (hard, every run): %d\n", r.MatchedHard)
+	fmt.Fprintf(w, "- hard recall (intersection): %.0f%%\n", r.HardRecall*100)
+	fmt.Fprintf(w, "- union recall (any run): %.0f%%\n", r.UnionRecall*100)
 	fmt.Fprintf(w, "- extra findings: %d\n", r.ExtraFindings)
 	if len(r.HardMisses) > 0 {
 		fmt.Fprintf(w, "\n**hard misses:**\n")
