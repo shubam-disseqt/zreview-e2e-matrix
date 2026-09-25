@@ -9,7 +9,7 @@ Runs nightly at 03:00 UTC + on demand via `workflow_dispatch`.
 The product repo is treated as a shipped product other repos consume via the sacr GitHub Action. It has no E2E scaffolding. This repo — the matrix — owns:
 
 - Seeded-bug branches (`pr-N-branch`)
-- Ground-truth expected findings (`.matrix/expected.json` on each branch)
+- Ground-truth expected findings (`.matrix/cases/<branch>.json` on `main`, never on the case branch — anything in the PR diff gets indexed and quoted back to the model, which contaminated earlier recall numbers)
 - The runner workflow (`.github/workflows/e2e-matrix.yml`)
 - Assertion + aggregator tools (`.e2e/`)
 
@@ -19,9 +19,9 @@ Every case is a **persistent open PR** on THIS repo (e.g. `pr-3-branch → main`
 
 1. For each case: check out the branch, build `sacr` from product-repo source
 2. Run `sacr review --pr N --format github` → posts inline comments to the persistent PR
-3. Run `sacr review --commit HEAD --format json --output actual.json` → captures the same-run findings for assertion
-4. `.e2e/assert` compares `actual.json` against `.matrix/expected.json` on the branch
-5. `.e2e/aggregate` produces a matrix-wide report and gates on `recall >= 80%` AND no missed CRITICAL
+3. Run `sacr review --commit HEAD --format json` `RUNS` times (default 3) → `actual-1..N.json`
+4. `.e2e/assert` compares every run against `.matrix/cases/<branch>.json` from `main`. A finding counts only when **every** run caught it (intersection); union recall is reported next to it
+5. `.e2e/aggregate` produces a matrix-wide report and gates on `intersection recall >= 80%` AND no missed CRITICAL
 
 `sacr`'s fingerprint markers (`<!-- sacr:fp:HEX -->`) auto-clean stale comments across runs.
 
@@ -29,10 +29,12 @@ Every case is a **persistent open PR** on THIS repo (e.g. `pr-3-branch → main`
 
 | Case branch | PR # | Seeded bugs |
 |---|---|---|
-| `pr-1-branch` | 1 | 0 (docs-only overview) |
-| `pr-3-branch` | 6 | 5 (hardcoded secret, dropped err, oob index, XSS, ignored err) |
-| `pr-5-branch` | 3 | 2 (weak entropy, timing attack) |
-| `pr-10-branch` | 8 | 0 (deps-only bump) |
+| `pr-11-branch` | 13 | 1 (SQL injection) |
+| `pr-19-branch` | 19 | 12 (index blast radius, slice race, goroutine leak, SQLi, AWS creds, md5, InsecureSkipVerify, unclosed body, path traversal, ignored Atoi, off-by-one, vulnerable dep) — full-feature audit case |
+| `pr-1-branch` | 1 | 0 (docs-only overview, no ground truth yet) |
+| `pr-3-branch` | 6 | 5 (no ground truth yet) |
+| `pr-5-branch` | 3 | 2 (no ground truth yet) |
+| `pr-10-branch` | 8 | 0 (deps-only bump, no ground truth yet) |
 
 PR numbers are discovered at runtime via `gh pr list --head <branch>` — branches can be renamed or PRs recreated without workflow edits.
 
@@ -77,8 +79,8 @@ No secrets are needed on the product repo — cross-repo triggers are not used; 
 
 ## Adding a case
 
-1. Create branch `pr-N-branch` off `main` with the seeded bug(s)
-2. Add `.matrix/expected.json` on that branch describing every seeded finding
+1. Create branch `pr-N-branch` off `main` with the seeded bug(s). Do NOT add the ground truth to the branch
+2. Add `.matrix/cases/pr-N-branch.json` on `main` describing every seeded finding
 3. Open a persistent PR `pr-N-branch → main` — keep it open forever
 4. Add the branch name to the `CASES` env in `.github/workflows/e2e-matrix.yml`
 5. `gh workflow run e2e-matrix.yml` for a manual first check
@@ -99,7 +101,7 @@ cd - && /tmp/sacr review --commit HEAD --format json --output /tmp/actual.json -
 
 # Build + run assert
 cd .e2e && go build -o /tmp/assert ./assert
-/tmp/assert -expected ../.matrix/expected.json -actual /tmp/actual.json -case pr-3-branch
+/tmp/assert -expected ../.matrix/cases/pr-3-branch.json -actual /tmp/actual.json -actual /tmp/actual-2.json -case pr-3-branch
 ```
 
 ## Gate

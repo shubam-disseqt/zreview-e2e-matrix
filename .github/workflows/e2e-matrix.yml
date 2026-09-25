@@ -4,7 +4,9 @@ name: sacr E2E matrix
 #  - Iterates case branches, reviews the persistent PR for each with
 #    sacr in --format github (posts inline comments) AND --format json
 #    (captures findings for assertion).
-#  - Asserts each case against .matrix/expected.json.
+#  - Asserts each case against .matrix/cases/<case>.json on main. Ground
+#    truth never lives on the case branch: anything in the PR diff is
+#    indexed and quoted back to the model, which contaminates recall.
 #  - Aggregates recall + gates.
 #
 # The runner (this workflow) lives on the matrix repo so the product
@@ -33,11 +35,14 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Persistent open PRs on this repo, one per case archetype. Each PR's
-  # head branch has .matrix/expected.json as ground truth. PR numbers are
+  # Persistent open PRs on this repo, one per case archetype. Ground truth
+  # for each is .matrix/cases/<branch>.json on main. PR numbers are
   # discovered at runtime via `gh pr list --head <branch>` so this list
   # only needs the branch names.
-  CASES: '["pr-11-branch"]'
+  CASES: '["pr-11-branch", "pr-19-branch"]'
+  # LLM output varies run to run; the gate uses findings caught in EVERY
+  # run, and union recall is reported alongside.
+  RUNS: "3"
 
 jobs:
   plan:
@@ -125,26 +130,30 @@ jobs:
             --min-severity LOW \
             --repo .
 
-      - name: sacr review — capture JSON for assertion
+      - name: sacr review — capture JSON for assertion (RUNS times)
         working-directory: matrix
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SACR_MODEL: gpt-4o-mini
         run: |
-          "$RUNNER_TEMP/sacr" review \
-            --commit HEAD \
-            --format json \
-            --min-severity LOW \
-            --output "$RUNNER_TEMP/actual.json" \
-            --repo .
+          for i in $(seq 1 "$RUNS"); do
+            "$RUNNER_TEMP/sacr" review \
+              --commit HEAD \
+              --format json \
+              --min-severity LOW \
+              --output "$RUNNER_TEMP/actual-$i.json" \
+              --repo .
+          done
 
-      - name: Assert
+      - name: Assert (intersection across runs gates; union reported)
         working-directory: matrix
         run: |
+          ACTUALS=()
+          for i in $(seq 1 "$RUNS"); do ACTUALS+=(-actual "$RUNNER_TEMP/actual-$i.json"); done
           "$RUNNER_TEMP/assert" \
-            -expected .matrix/expected.json \
-            -actual "$RUNNER_TEMP/actual.json" \
+            -expected "../matrix-tools/.matrix/cases/${{ matrix.case }}.json" \
+            "${ACTUALS[@]}" \
             -case "${{ matrix.case }}" \
             -json > "$RUNNER_TEMP/result.json" || true
           cat "$RUNNER_TEMP/result.json"
@@ -154,7 +163,7 @@ jobs:
         with:
           name: e2e-case-${{ matrix.case }}
           path: |
-            ${{ runner.temp }}/actual.json
+            ${{ runner.temp }}/actual-*.json
             ${{ runner.temp }}/result.json
           retention-days: 30
 
