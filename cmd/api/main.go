@@ -9,5 +9,7 @@ func main() {
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "ok")
 	})
-	// placeholder — real handlers land in feature PRs
+	http.HandleFunc("/price", priceHandler)
+	http.HandleFunc("/total", totalHandler)
+	// more handlers land in feature PRs
 }
