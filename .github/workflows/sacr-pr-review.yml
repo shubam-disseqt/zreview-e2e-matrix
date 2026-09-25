@@ -38,6 +38,20 @@ jobs:
       - name: Build sacr
         run: cd .product && go build -trimpath -o "$RUNNER_TEMP/sacr" ./cmd/sacr
 
+      # sacr's deterministic scanners are best-effort: a missing binary is
+      # skipped with a log line. Install all three so the scanner path is
+      # actually exercised on this benchmark.
+      - name: Install scanners (gitleaks, semgrep, govulncheck)
+        run: |
+          set -euo pipefail
+          go install github.com/zricethezav/gitleaks/v8@latest
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+          pipx install semgrep
+          "$HOME/go/bin/gitleaks" version
+          "$HOME/go/bin/govulncheck" -version
+          semgrep --version
+
       - name: sacr review
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -54,3 +68,17 @@ jobs:
             --to ${{ github.event.pull_request.head.sha }} \
             --format github \
             --min-severity LOW
+
+      # The session JSONL carries the exact prompt sacr sent (including the
+      # "Codebase context" block from the index), which is the only way to
+      # verify indexed context reached the model.
+      - name: Upload sacr session + index
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sacr-session-pr${{ github.event.pull_request.number }}-${{ github.run_attempt }}
+          path: |
+            ~/.sacr/sessions/
+            ~/.sacr/index/
+          retention-days: 14
+          if-no-files-found: warn
